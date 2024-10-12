@@ -21,7 +21,7 @@ async def send_session_update(ws, modalities, voice, system_message):
         session_update["session"]["voice"] = voice
 
     # debug
-    print('Sending session update:', json.dumps(session_update))
+    print('Sending session update')
 
     # send to the web socket server
     await ws.send(json.dumps(session_update))
