@@ -19,8 +19,13 @@ SYSTEM_MESSAGE = ("Your knowledge cutoff is 2023-10. You are a helpful, witty, a
 async def send_conversation_item(ws, user_input):
     """Send user message as a conversation.item.create event."""
     try:
+        # set the event id
         event_id = f"event_{uuid.uuid4().hex}"
+
+        # set the message id
         item_id = f"msg_{uuid.uuid4().hex[:28]}"
+
+        # set the event
         event = {
             "event_id": event_id,
             "type": "conversation.item.create",
@@ -33,34 +38,47 @@ async def send_conversation_item(ws, user_input):
                 "content": [{"type": "input_text", "text": user_input}]
             }
         }
+
+        # send the conversation item over the websocket
         await ws.send(json.dumps(event))
+
+        # return the event if
         return event["item"]["id"]
     except Exception as e:
+        # error
         print(f"Error while sending conversation item: {e}")
 
 # Function to trigger response generation with response.create
-async def trigger_response(ws):
-    """Trigger response generation based on the user message."""
+async def trigger_response(ws, modalities):
+    """Trigger response generation based on the user message and mode."""
     try:
+        # set the event id
         event_id = f"event_{uuid.uuid4().hex}"
-        event = {
+
+        # set the response data
+        response_data = {
             "event_id": event_id,
             "type": "response.create",
             "response": {
-                "modalities": ["text"],
+                "modalities": modalities,  # Respect text or text+audio modes
                 "instructions": SYSTEM_MESSAGE,
-                "voice": "alloy",
-                "output_audio_format": "pcm16",
                 "temperature": 0.7,
                 "max_output_tokens": 150
             }
         }
-        await ws.send(json.dumps(event))
-    except Exception as e:
-        print(f"Error while triggering response: {e}")
 
+        # If audio is included, add voice and output_audio_format
+        if "audio" in modalities:
+            response_data["response"]["voice"] = VOICE
+            response_data["response"]["output_audio_format"] = "pcm16"
+
+        # send the response create event
+        await ws.send(json.dumps(response_data))
+    except Exception as e:
+        # error
+        print(f"Error while triggering response: {e}")
 # Function to send user message and keep the "You:" prompt at the bottom
-async def send_message(ws, message_queue):
+async def send_message(ws, modalities, message_queue):
     """Send user messages interactively and trigger assistant responses."""
     try:
         # loop forever
@@ -79,7 +97,7 @@ async def send_message(ws, message_queue):
             await send_conversation_item(ws, user_input)
 
             # trigger a response from the server from the convrsation
-            await trigger_response(ws)
+            await trigger_response(ws, modalities)
     except KeyboardInterrupt:
         print("\nExiting chat...")
 
@@ -156,7 +174,7 @@ async def main(modalities, streaming_mode):
 
         # asynchronously receive and send
         receive_task = asyncio.create_task(receive_messages(ws, streaming_mode, message_queue))
-        send_task = asyncio.create_task(send_message(ws, message_queue))
+        send_task = asyncio.create_task(send_message(ws, modalities, message_queue))
 
         # async
         await asyncio.gather(receive_task, send_task)
