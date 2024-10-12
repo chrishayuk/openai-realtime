@@ -38,21 +38,29 @@ async def receive_messages(ws):
     try:
         async for message in ws:
             response = json.loads(message)
+            
             # Handle the response and extract transcript or audio chunks
             transcript_buffer = handle_message(response, transcript_buffer)
-    except asyncio.CancelledError:
-        print("\nMessage receiving task canceled.")
     except websockets.ConnectionClosed as e:
-        print(f"\nConnection closed by server: {e}")
+        # handle disconnections
+        if e.code == 1000:  # Normal closure
+            print("Connection closed by the server (normal).")
+
+        else:  # Unexpected disconnection
+            print(f"Connection closed unexpectedly with code {e.code}: {e.reason}")
+    except asyncio.CancelledError:
+        # cancelling
+        print("\nMessage receiving task canceled.")
     except Exception as e:
+        # error receiving
         print(f"An error occurred while receiving: {e}")
+
 
 # Main function to run the interactive chat CLI
 async def main(modalities):
     # Connect to the server
     ws = await connect_to_server()
 
-    # check if we got a connection
     if ws is None:
         print("Failed to connect to server.")
         return
@@ -71,11 +79,20 @@ async def main(modalities):
         await asyncio.gather(receive_task, send_task)
 
     except Exception as e:
+        # error
         print(f"An error occurred: {e}")
+
     finally:
+        # Ensure tasks are canceled gracefully
+        receive_task.cancel()
+        send_task.cancel()
+
+        # wait until they're done
+        await asyncio.gather(receive_task, send_task, return_exceptions=True)
+        
         # Close WebSocket connection
         await close_connection(ws)
-        receive_task.cancel()  # Ensure the receiving task is canceled
+
 
 # Entry point with CLI argument parsing
 if __name__ == "__main__":
