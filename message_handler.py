@@ -1,51 +1,38 @@
-# message_handler.py
-
 # Function to handle different types of messages from the WebSocket
 def handle_message(response, transcript_buffer):
     """Handle different types of messages from the server."""
     msg_type = response.get("type")
     
-    # Handle audio transcript deltas
-    if msg_type == "response.audio_transcript.delta":
-        delta = response.get("transcript", "")
-        transcript_buffer += delta
-        print(f"Partial Transcript: {transcript_buffer}")
-        return transcript_buffer
-
-    # Final audio transcript is received
-    elif msg_type == "response.audio_transcript.done":
-        print(f"Final Transcript: {transcript_buffer}")
-        return ""
-
-    # Handle audio delta (audio data chunks)
-    elif msg_type == "response.audio.delta":
-        audio_chunk = response.get("delta", "")
-        print(f"Audio chunk received: {len(audio_chunk)} bytes")
-        return transcript_buffer
-
-    # Handle text transcript deltas
-    elif msg_type == "response.text.delta":
+    # Handle text transcript deltas (chunked responses)
+    if msg_type == "response.text.delta":
         delta = response.get("delta", "")
         transcript_buffer += delta
-        print(f"Partial Text: {transcript_buffer}")
-        return transcript_buffer
+        return transcript_buffer, delta  # Return both the buffer and the chunk
 
     # Final text transcript is received
     elif msg_type == "response.text.done":
-        print(f"Final Text: {transcript_buffer}")
-        return ""
+        final_chunk = transcript_buffer
+        return "", final_chunk  # Clear the buffer after final text is handled
+
+    # Handle audio transcript deltas (chunked audio responses)
+    elif msg_type == "response.audio_transcript.delta":
+        delta = response.get("transcript", "")
+        transcript_buffer += delta
+        return transcript_buffer, delta  # Return both the buffer and the chunk
+
+    # Final audio transcript is received
+    elif msg_type == "response.audio_transcript.done":
+        final_chunk = transcript_buffer
+        return "", final_chunk  # Clear the buffer after final transcript
 
     # Handle response completion
     elif msg_type == "response.done":
-        print("\n[Response complete]\n")
-        return transcript_buffer
+        return transcript_buffer, None  # No chunk, just return the buffer
 
-    # Handle content part done (for audio or transcript)
-    elif msg_type == "response.content_part.done":
-        part = response.get("part", {})
-        if part.get("type") == "audio" and "transcript" in part:
-            print(f"Transcript (from content part): {part['transcript']}")
-        return transcript_buffer
+    # Handle audio chunks
+    elif msg_type == "response.audio.delta":
+        audio_chunk = response.get("delta", "")
+        return transcript_buffer, audio_chunk  # Return the buffer and the audio chunk
 
     # Suppress unnecessary message types
     ignored_message_types = [
@@ -56,8 +43,7 @@ def handle_message(response, transcript_buffer):
     ]
     
     if msg_type in ignored_message_types:
-        return transcript_buffer  # Ignore these message types silently
+        return transcript_buffer, None  # Ignore these message types silently
 
-    # Log unhandled message types
-    print(f"Unhandled message type: {msg_type}")
-    return transcript_buffer
+    # Return buffer and None for unhandled message types
+    return transcript_buffer, None
