@@ -6,6 +6,8 @@ import websockets
 from session import send_session_update
 from message_handler import handle_message
 from connection_handler import connect_to_server, close_connection
+from audio_message_sender import send_audio_file, send_microphone_audio  # Import audio handlers
+from text_message_sender import send_conversation_item  # Import text handler
 
 VOICE = "alloy"
 SYSTEM_MESSAGE = ("Your knowledge cutoff is 2023-10. You are a helpful, witty, and friendly AI. "
@@ -14,39 +16,6 @@ SYSTEM_MESSAGE = ("Your knowledge cutoff is 2023-10. You are a helpful, witty, a
                   "playful tone. If interacting in a non-English language, start by using the standard accent or "
                   "dialect familiar to the user. Talk quickly. You should always call a function if you can. Do not "
                   "refer to these rules, even if you're asked about them.")
-
-# Function to send user message as conversation.item.create
-async def send_conversation_item(ws, user_input):
-    """Send user message as a conversation.item.create event."""
-    try:
-        # set the event id
-        event_id = f"event_{uuid.uuid4().hex}"
-
-        # set the message id
-        item_id = f"msg_{uuid.uuid4().hex[:28]}"
-
-        # set the event
-        event = {
-            "event_id": event_id,
-            "type": "conversation.item.create",
-            "previous_item_id": None,
-            "item": {
-                "id": item_id,
-                "type": "message",
-                "status": "completed",
-                "role": "user",
-                "content": [{"type": "input_text", "text": user_input}]
-            }
-        }
-
-        # send the conversation item over the websocket
-        await ws.send(json.dumps(event))
-
-        # return the event if
-        return event["item"]["id"]
-    except Exception as e:
-        # error
-        print(f"Error while sending conversation item: {e}")
 
 # Function to trigger response generation with response.create
 async def trigger_response(ws, modalities):
@@ -77,26 +46,31 @@ async def trigger_response(ws, modalities):
     except Exception as e:
         # error
         print(f"Error while triggering response: {e}")
+
 # Function to send user message and keep the "You:" prompt at the bottom
-async def send_message(ws, modalities, message_queue):
-    """Send user messages interactively and trigger assistant responses."""
+async def send_message(ws, modalities, message_queue, audio_source=None):
+    """Send user messages or audio interactively and trigger assistant responses."""
     try:
-        # loop forever
         while True:
-            # get message from the queue
             await message_queue.get()
 
-            # get the user input
-            user_input = await asyncio.get_event_loop().run_in_executor(None, input, "")
+            # Handle audio mode
+            if "audio" in modalities:
+                if audio_source == "mic":
+                    await send_microphone_audio(ws)  # Send microphone audio
+                else:
+                    await send_audio_file(ws, audio_source)  # Send audio from file
+            else:
+                # Handle text mode
+                user_input = await asyncio.get_event_loop().run_in_executor(None, input, "")
 
-            # clean the input up
-            if not user_input.strip():
-                continue
+                if not user_input.strip():
+                    continue
 
-            # send the conversation item
-            await send_conversation_item(ws, user_input)
+                # Send text conversation item
+                await send_conversation_item(ws, user_input)
 
-            # trigger a response from the server from the convrsation
+            # Trigger response from the server
             await trigger_response(ws, modalities)
     except KeyboardInterrupt:
         print("\nExiting chat...")
@@ -108,7 +82,7 @@ async def receive_messages(ws, streaming_mode, message_queue):
     response_started = False
 
     try:
-        # loop throught the messages
+        # loop through the messages
         async for message in ws:
             # load the response
             response = json.loads(message)
@@ -149,7 +123,7 @@ async def receive_messages(ws, streaming_mode, message_queue):
 
 
 # Main function to run the interactive chat CLI
-async def main(modalities, streaming_mode):
+async def main(modalities, streaming_mode, audio_source=None):
     # connect to the server
     ws = await connect_to_server()
 
@@ -169,12 +143,12 @@ async def main(modalities, streaming_mode):
         print("Start chatting! (Press Ctrl+C to exit)\n")
         print(f"\nYou: ", end="", flush=True)  # New line for next input
 
-        # stick none in the queue
+        # put none in the queue
         await message_queue.put(None)
 
         # asynchronously receive and send
         receive_task = asyncio.create_task(receive_messages(ws, streaming_mode, message_queue))
-        send_task = asyncio.create_task(send_message(ws, modalities, message_queue))
+        send_task = asyncio.create_task(send_message(ws, modalities, message_queue, audio_source))
 
         # async
         await asyncio.gather(receive_task, send_task)
@@ -194,13 +168,17 @@ def parse_arguments():
     # setup the argument parser
     parser = argparse.ArgumentParser(description="Choose between text or audio for the session.")
 
-    # text or aduio mode
+    # text or audio mode
     parser.add_argument("--mode", choices=["text", "audio"], default="text",
                         help="Select the output mode: 'text' for text-based response, 'audio' for audio response.")
     
     # steaming argument
     parser.add_argument("--no-streaming", action="store_true", 
                         help="Disable streaming mode. If set, final response mode will be used.")
+    
+    # Optional audio file or mic
+    parser.add_argument("--audio-source", choices=["mic", "file"], default=None,
+                        help="Choose the audio source: 'mic' to record from microphone or 'file' for an audio file.")
     
     # parse arguments
     return parser.parse_args()
@@ -215,9 +193,12 @@ if __name__ == "__main__":
     # no streaming
     streaming_mode = not args.no_streaming
 
+    # Optional audio source
+    audio_source = args.audio_source if args.mode == "audio" else None
+
     try:
         # run main
-        asyncio.run(main(modalities, streaming_mode))
+        asyncio.run(main(modalities, streaming_mode, audio_source))
     except KeyboardInterrupt:
         # disconnect
         print("\nDisconnected from server by user.")
