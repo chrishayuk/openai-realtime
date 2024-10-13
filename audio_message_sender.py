@@ -56,7 +56,7 @@ async def send_microphone_audio(ws):
         CHUNK_DURATION = 0.5  # Duration of each audio chunk in seconds (500ms)
 
         # Calculate the chunk size based on the duration
-        CHUNK = int(RATE * CHUNK_DURATION)
+        CHUNK = int(RATE * CHUNK_DURATION * CHANNELS * 2)  # 2 bytes per sample (16-bit PCM)
         audio_data_accumulated = b""
 
         print("Recording from microphone. Press Ctrl+C to stop.")
@@ -71,12 +71,11 @@ async def send_microphone_audio(ws):
             # Ensure indata is 16-bit PCM, flatten and convert to bytes
             pcm_audio = (indata * 32767).astype(np.int16).tobytes()
 
-            # Only accumulate if the audio is not silent
-            if not is_silent(indata):
-                audio_data_accumulated += pcm_audio
+            # Accumulate the audio data
+            audio_data_accumulated += pcm_audio
 
-            # Send accumulated data if it's large enough (> 1KB)
-            if len(audio_data_accumulated) > 1024:
+            # Send accumulated data if it's large enough (e.g., 4096 bytes)
+            if len(audio_data_accumulated) > 4096:  # Adjust threshold for sending
                 # Convert to base64 for transmission
                 audio_base64 = base64.b64encode(audio_data_accumulated).decode()
 
@@ -112,3 +111,4 @@ async def send_microphone_audio(ws):
 
     except Exception as e:
         print(f"Error while sending microphone audio: {e}")
+

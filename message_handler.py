@@ -1,7 +1,9 @@
 # Function to handle different types of messages from the WebSocket
 def handle_message(response, transcript_buffer):
     """Handle different types of messages from the server."""
-    msg_type = response.get("type")
+    msg_type = response.get("type", "")
+    print(msg_type)
+    print(response)
     
     # Handle text transcript deltas (chunked responses)
     if msg_type == "response.text.delta":
@@ -31,8 +33,11 @@ def handle_message(response, transcript_buffer):
 
     # Handle audio chunks
     elif msg_type == "response.audio.delta":
+        # get the audip chunk
         audio_chunk = response.get("delta", "")
-        return transcript_buffer, audio_chunk  # Return the buffer and the audio chunk
+
+        # Return the buffer and the audio chunk
+        return transcript_buffer, audio_chunk  
 
     # Suppress unnecessary message types
     ignored_message_types = [
@@ -43,7 +48,8 @@ def handle_message(response, transcript_buffer):
     ]
     
     if msg_type in ignored_message_types:
-        return transcript_buffer, None  # Ignore these message types silently
-
+        # Ignore these message types silently
+        return transcript_buffer, None  
+    
     # Return buffer and None for unhandled message types
     return transcript_buffer, None

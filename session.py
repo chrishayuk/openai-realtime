@@ -16,8 +16,8 @@ async def send_session_update(ws, modalities, voice, system_message):
 
     # Add audio-related fields only if "audio" is in modalities
     if "audio" in modalities:
-        session_update["session"]["input_audio_format"] = "g711_ulaw"
-        session_update["session"]["output_audio_format"] = "g711_ulaw"
+        session_update["session"]["input_audio_format"] = "pcm16"
+        session_update["session"]["output_audio_format"] = "pcm16"
         session_update["session"]["voice"] = voice
 
     # debug

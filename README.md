@@ -8,7 +8,14 @@ python hello.py --mode text
 ```
 
 ## Audio Mode
+the following tests sending audio using a microphone
 
 ```bash
-python hello.py --mode audio
+python main.py --mode audio --audio-source mic
+```
+
+and a file
+
+```bash
+python main.py --mode audio --audio-source file
 ```
