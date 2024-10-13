@@ -15,7 +15,7 @@ def decode_audio(audio_chunk, audio_format='pcm'):
             
             # Return raw PCM audio data for playback
             return audio_array.tobytes()
-
+            
         elif audio_format == 'g711_ulaw':
             # Decode G.711 u-law to PCM
             decoded_pcm = g711.decode_pcm(decoded_audio)

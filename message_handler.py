@@ -2,8 +2,6 @@
 def handle_message(response, transcript_buffer):
     """Handle different types of messages from the server."""
     msg_type = response.get("type", "")
-    print(msg_type)
-    print(response)
     
     # Handle text transcript deltas (chunked responses)
     if msg_type == "response.text.delta":
