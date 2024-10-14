@@ -28,25 +28,28 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
     """Receive messages from the server and handle text or audio playback."""
     transcript_buffer = ""  # Accumulates full response for assistant
     response_started = False
-    response_done_received = False  # Track when 'response.done' is received
 
     try:
         async for message in ws:
             response = json.loads(message)
             message_type = response.get('type')
 
-            logger.info(f"Received message of type: {message_type}")
+            logger.debug(f"Received message of type: {message_type}")
 
             # Handle audio chunk processing
             if message_type == 'response.audio.delta':
+                # set the event id
                 event_id = response.get('event_id')
-                logger.info(f"Received audio chunk: {event_id}")
+                logger.debug(f"Received audio chunk: {event_id}")
+
+                # get the audio chunk
                 audio_chunk = response.get("delta", "")
 
+                # if we have audio
                 if audio_chunk:
                     # Correctly decode base64-encoded audio chunk
                     decoded_audio = decode_audio(audio_chunk)
-                    logger.info(f"Decoded audio chunk size: {len(decoded_audio)} bytes")
+                    logger.debug(f"Decoded audio chunk size: {len(decoded_audio)} bytes")
 
                     # Queue the chunk for audio playback
                     audio_playback.enqueue_audio_chunk(decoded_audio)
@@ -67,32 +70,34 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
 
             # When 'response.done' is received
             if message_type == 'response.done':
-                logger.info(f"Received {message_type} message.")
-                response_done_received = True
-                logger.info(f"Waiting for {audio_playback.audio_queue.unfinished_tasks} audio chunks to finish...")
+                # debug
+                logger.debug(f"Received {message_type} message.")
+                logger.debug(f"Waiting for {audio_playback.audio_queue.unfinished_tasks} audio chunks to finish...")
 
                 # After receiving 'response.done', check and wait for audio chunks to finish
                 while audio_playback.audio_queue.unfinished_tasks > 0:
-                    await asyncio.sleep(0.1)  # Small delay to wait for chunks to be processed
+                    # Small delay to wait for chunks to be processed
+                    await asyncio.sleep(0.1)  
                 logger.info("All audio chunks processed.")
 
                 # Send the flush command only after all audio chunks are processed
                 if "audio" in modalities:
+                    # queue the flush command
                     audio_playback.enqueue_audio_chunk(FLUSH_COMMAND)
-                    logger.info("Enqueued FLUSH_COMMAND.")
+                    logger.debug("Enqueued FLUSH_COMMAND.")
 
                     # Wait for the audio playback to finish
-                    logger.info("Waiting for audio playback to finish for this response.")
+                    logger.debug("Waiting for audio playback to finish for this response.")
                     audio_playback.wait_for_playback_finish()
-                    logger.info("Audio playback finished.")
+                    logger.debug("Audio playback finished.")
 
                 # Now prompt for the next input
                 print(f"\nYou: ", end="", flush=True)
                 await message_queue.put(None)
                 response_started = False
                 transcript_buffer = ""
-                response_done_received = False  # Reset for the next response
                 continue
+
 
     except Exception as e:
         logger.error(f"Error while receiving: {e}", exc_info=True)
@@ -112,7 +117,7 @@ async def trigger_response(ws, modalities):
                 "modalities": modalities,  # Respect text or text+audio modes
                 "instructions": SYSTEM_MESSAGE,
                 "temperature": 0.7,
-                "max_output_tokens": 500  # Adjusted for longer responses
+                "max_output_tokens": 1500  # Adjusted for longer responses
             }
         }
 
