@@ -8,7 +8,15 @@ python hello.py --mode text
 ```
 
 ## Audio Mode
-the following tests sending audio using a microphone
+
+## use text as an input
+if you are looking to just type out questions, and get responses back as audio
+
+```bash
+python main.py --mode audio
+```
+
+## use microphone as an input
 
 ```bash
 python main.py --mode audio --audio-source mic
