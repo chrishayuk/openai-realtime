@@ -36,6 +36,7 @@ def audio_playback():
     logger.debug("Playback thread started.")
     buffer = bytearray()
     last_play_time = time.time()
+    stream = None  # Initialize stream to None
 
     # Initialize PyAudio and the stream
     try:
@@ -55,7 +56,6 @@ def audio_playback():
                 audio_chunk = audio_queue.get(timeout=0.1)
                 logger.debug("Got an item from the queue.")
             except queue.Empty:
-                # If the buffer has data, play it
                 if buffer:
                     logger.debug(f"Playing remaining {len(buffer)} bytes of audio (queue empty).")
                     stream.write(bytes(buffer))
@@ -63,40 +63,38 @@ def audio_playback():
                     last_play_time = time.time()
                 continue
 
-            try:
-                if audio_chunk is FLUSH_COMMAND:
-                    # Flush the buffer
-                    if buffer:
-                        logger.debug(f"Flushing buffer on FLUSH_COMMAND with {len(buffer)} bytes.")
-                        stream.write(bytes(buffer))
-                        buffer.clear()
-                        last_play_time = time.time()
-                    else:
-                        logger.debug("Buffer is empty upon receiving FLUSH_COMMAND.")
-                    # Signal that playback is complete
-                    logger.debug("Playback thread setting playback_complete_event.")
-                    playback_complete_event.set()
-                    # Note: Do not clear the event here; let the main thread handle it
-                elif audio_chunk is None:
-                    # Shutdown signal received
-                    logger.debug("Playback thread received shutdown signal.")
-                    break
-                else:
-                    # Add chunk to buffer
-                    buffer.extend(audio_chunk)
-                    current_time = time.time()
-
-                    # Play the buffer when it's large enough or time to flush
-                    if len(buffer) >= BUFFER_THRESHOLD or (current_time - last_play_time) >= MAX_WAIT_TIME:
-                        logger.debug(f"Playing {len(buffer)} bytes of audio.")
-                        stream.write(bytes(buffer))
-                        buffer.clear()
-                        last_play_time = current_time
-            except Exception as e:
-                logger.error(f"Error during audio playback: {e}", exc_info=True)
-            finally:
-                # Ensure task_done is called once per get()
+            if audio_chunk is None:
+                logger.debug("Received shutdown signal.")
+                # Mark the queue task as done
                 audio_queue.task_done()
+                break
+
+            if audio_chunk is FLUSH_COMMAND:
+                if buffer:
+                    logger.debug(f"Flushing buffer on FLUSH_COMMAND with {len(buffer)} bytes.")
+                    stream.write(bytes(buffer))
+                    buffer.clear()
+                    last_play_time = time.time()
+                logger.debug("Buffer is empty upon receiving FLUSH_COMMAND.")
+                playback_complete_event.set()
+                # Mark the queue task as done
+                audio_queue.task_done()
+                continue
+
+            # Process and play the audio chunk
+            buffer.extend(audio_chunk)
+            current_time = time.time()
+
+            if len(buffer) >= BUFFER_THRESHOLD or (current_time - last_play_time) >= MAX_WAIT_TIME:
+                logger.debug(f"Playing {len(buffer)} bytes of audio.")
+                stream.write(bytes(buffer))
+                buffer.clear()
+                last_play_time = current_time
+
+            logger.info(f"Processed audio chunk, {audio_queue.unfinished_tasks - 1} remaining chunks.")
+
+            # Mark the queue task as done
+            audio_queue.task_done()
 
         # Play any remaining audio when exiting
         if buffer:
@@ -106,12 +104,17 @@ def audio_playback():
     except Exception as e:
         logger.error(f"Exception in playback thread: {e}", exc_info=True)
     finally:
-        # Close the stream and PyAudio
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
+        if stream is not None:
+            try:
+                if not stream.is_stopped():
+                    stream.stop_stream()
+                stream.close()
+            except Exception as e:
+                logger.warning(f"Error closing stream: {e}")
+            p.terminate()
+        else:
+            logger.debug("Stream was not initialized.")
         logger.debug("Playback thread terminated.")
-        # Ensure the playback_complete_event is set to avoid deadlock
         playback_complete_event.set()
 
 def start_playback_thread():
@@ -144,17 +147,20 @@ def enqueue_audio_chunk(audio_chunk):
     elif audio_chunk is None:
         logger.debug("Enqueued shutdown signal")
     else:
-        logger.debug(f"Enqueued audio chunk, Queue size: {audio_queue.qsize()}")
+        logger.debug(f"Enqueued audio chunk, {audio_queue.unfinished_tasks} pending chunks.")
 
 def wait_for_playback_finish():
     """
     Waits for all audio chunks to be played back.
     """
-    logger.debug("Waiting for playback to finish.")
+    logger.info("Waiting for playback to finish.")
+
     # Wait until all items in the queue have been processed
     audio_queue.join()
+
     # Wait for the playback completion event
     playback_complete_event.wait()
-    logger.debug("Playback finished.")
+    logger.info("Playback finished.")
+
     # Clear the event for the next use
     playback_complete_event.clear()
