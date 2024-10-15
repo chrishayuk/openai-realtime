@@ -11,7 +11,6 @@ from connection_handler import connect_to_server, close_connection
 from audio_playback import FLUSH_COMMAND
 from message_sender import send_message
 
-
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

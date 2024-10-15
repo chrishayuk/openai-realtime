@@ -1,6 +1,10 @@
 import base64
 import numpy as np
 import g711
+import logging
+
+# Initialize logging
+logger = logging.getLogger(__name__)
 
 def decode_audio(audio_chunk, audio_format='pcm'):
     """Decode the received audio chunk based on the format (PCM or G.711)."""
@@ -20,8 +24,10 @@ def decode_audio(audio_chunk, audio_format='pcm'):
             # Decode G.711 u-law to PCM
             decoded_pcm = g711.decode_pcm(decoded_audio)
             decoded_pcm = np.array(decoded_pcm, dtype=np.int16)  # Explicitly cast to int16
-            print(f"Decoded G.711 u-law audio to PCM, size: {len(decoded_pcm)} bytes")
-            print(f"First few decoded G.711 u-law PCM samples: {decoded_pcm[:20]}")
+
+            # debug
+            logger.debug(f"Decoded G.711 u-law audio to PCM, size: {len(decoded_pcm)} bytes")
+            logger.debug(f"First few decoded G.711 u-law PCM samples: {decoded_pcm[:20]}")
 
             # Return for playback
             return decoded_pcm.tobytes()
@@ -30,13 +36,17 @@ def decode_audio(audio_chunk, audio_format='pcm'):
             # Decode G.711 a-law to PCM
             decoded_pcm = g711.decode_alaw(decoded_audio)
             decoded_pcm = np.array(decoded_pcm, dtype=np.int16)  # Explicitly cast to int16
-            print(f"Decoded G.711 a-law audio to PCM, size: {len(decoded_pcm)} bytes")
-            print(f"First few decoded PCM samples: {decoded_pcm[:20]}")
-            return decoded_pcm.tobytes()  # Return as PCM for playback
+
+            # debug
+            logger.debug(f"Decoded G.711 a-law audio to PCM, size: {len(decoded_pcm)} bytes")
+            logger.debug(f"First few decoded PCM samples: {decoded_pcm[:20]}")
+
+            # Return as PCM for playback
+            return decoded_pcm.tobytes()  
 
         else:
-            print("Unknown audio format")
+            logger.info("Unknown audio format")
             return None
     except Exception as e:
-        print(f"Error decoding audio: {e}")
+        logger.error(f"Error decoding audio: {e}")
         return None

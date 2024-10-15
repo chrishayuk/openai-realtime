@@ -9,15 +9,16 @@ python hello.py --mode text
 ```
 
 ## Audio Mode
+The following sections shows how to interact with the audio model.
 
-## use text as an input
+### use text as an input
 if you are looking to just type out questions, and get responses back as audio
 
 ```bash
 python main.py --mode audio
 ```
 
-## use microphone as an input
+### use microphone as an input
 
 ```bash
 python main.py --mode audio --audio-source mic
