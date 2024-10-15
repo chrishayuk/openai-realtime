@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def receive_messages(ws, streaming_mode, message_queue, modalities):
     """Receive messages from the server and handle text or audio playback."""
     transcript_buffer = ""  # Accumulates full response for assistant
-    response_started = False
+    response_started = False  # Tracks whether the assistant has started responding
 
     try:
         async for message in ws:
@@ -30,14 +30,11 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
 
             # Handle audio chunk processing
             if message_type == 'response.audio.delta':
-                # set the event id
                 event_id = response.get('event_id')
                 logger.debug(f"Received audio chunk: {event_id}")
 
-                # get the audio chunk
                 audio_chunk = response.get("delta", "")
 
-                # if we have audio
                 if audio_chunk:
                     # Correctly decode base64-encoded audio chunk
                     decoded_audio = decode_audio(audio_chunk)
@@ -47,49 +44,55 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
                     audio_playback.enqueue_audio_chunk(decoded_audio)
                 continue
 
-            # Handle text message chunks
+            # Handle text and audio transcript messages
             transcript_buffer, chunk = handle_message(response, transcript_buffer)
 
-            # Handle streaming for text response
+            # Handle streaming for text or audio transcript response
             if streaming_mode and chunk:
                 if not response_started:
-                    print("Assistant: ", end="", flush=True)
+                    print("Assistant: ", end="", flush=True)  # Print "Assistant:" only once
                     response_started = True
 
-                # Print each text chunk immediately, no new line yet
+                # Print each text chunk or audio transcript chunk immediately
                 if message_type in ['response.text.delta', 'response.audio_transcript.delta']:
                     print(chunk, end="", flush=True)
 
-            # When 'response.done' is received
-            if message_type == 'response.done':
-                # debug
+            # Handle final transcript from response.output_item.done
+            if message_type == 'response.output_item.done':
+                content_list = response.get('item', {}).get('content', [])
+                for content in content_list:
+                    if content.get('type') == 'audio' and 'transcript' in content:
+                        if not response_started:
+                            print("Assistant: ", end="", flush=True)  # Print "Assistant:" if not already printed
+                            response_started = True
+                        print(content['transcript'], end="", flush=True)
+
+            # When 'response.done' or 'response.audio_transcript.done' is received
+            if message_type in ['response.done', 'response.audio_transcript.done']:
                 logger.debug(f"Received {message_type} message.")
                 logger.debug(f"Waiting for {audio_playback.audio_queue.unfinished_tasks} audio chunks to finish...")
 
-                # After receiving 'response.done', check and wait for audio chunks to finish
+                # Wait for audio chunks to finish if any
                 while audio_playback.audio_queue.unfinished_tasks > 0:
-                    # Small delay to wait for chunks to be processed
-                    await asyncio.sleep(0.1)  
+                    await asyncio.sleep(0.1)  # Small delay to wait for chunks to be processed
+
                 logger.debug("All audio chunks processed.")
 
                 # Send the flush command only after all audio chunks are processed
                 if "audio" in modalities:
-                    # queue the flush command
                     audio_playback.enqueue_audio_chunk(FLUSH_COMMAND)
                     logger.debug("Enqueued FLUSH_COMMAND.")
-
-                    # Wait for the audio playback to finish
-                    logger.debug("Waiting for audio playback to finish for this response.")
                     audio_playback.wait_for_playback_finish()
                     logger.debug("Audio playback finished.")
 
-                # Now prompt for the next input
-                print(f"\nYou: ", end="", flush=True)
+                # Now prompt for the next input, but only if the assistant has finished responding
+                if response_started:
+                    print(f"\nYou: ", end="", flush=True)
+
                 await message_queue.put(None)
-                response_started = False
+                response_started = False  # Reset after assistant finishes
                 transcript_buffer = ""
                 continue
-
 
     except Exception as e:
         logger.error(f"Error while receiving: {e}", exc_info=True)

@@ -1,5 +1,9 @@
 # session.py
 import json
+import logging
+
+# Initialize logging
+logger = logging.getLogger(__name__)
 
 # Function to send session update
 async def send_session_update(ws, modalities, voice, system_message):
@@ -21,7 +25,7 @@ async def send_session_update(ws, modalities, voice, system_message):
         session_update["session"]["voice"] = voice
 
     # debug
-    print('Sending session update')
+    logger.debug("Sending session update")
 
     # send to the web socket server
     await ws.send(json.dumps(session_update))

@@ -2,6 +2,7 @@
 This is my test harness for the OpenAI real-time websocket interface
 
 ## Text Mode
+The following allows you to interact with the model purely using text and no audio
 
 ```bash
 python hello.py --mode text
