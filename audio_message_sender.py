@@ -28,10 +28,10 @@ async def send_audio_file(ws, file_path):
         logger.error(f"Error while sending audio file: {e}", exc_info=True)
 
 # Function to send microphone audio to the server in real-time
-async def send_microphone_audio(ws, on_audio_complete):
+async def send_microphone_audio(ws, modalities, system_message, voice):
     """
     Capture and send microphone audio in real-time to the server.
-    The `on_audio_complete` callback is called after all audio chunks are sent.
+    Trigger the assistant response after sending the last audio chunk.
     """
     try:
         RATE = 24000  # 24kHz sampling rate
@@ -61,22 +61,28 @@ async def send_microphone_audio(ws, on_audio_complete):
 
                 if is_silent(pcm_audio, threshold=SILENCE_THRESHOLD):
                     silence_duration += frames / RATE
-                    logger.debug(f"Silence detected. Silence duration: {silence_duration:.2f}s")
 
                     # If user was speaking and silence exceeds threshold, send accumulated audio
                     if speaking and silence_duration >= MAX_SILENCE_DURATION:
                         logger.info("End of speech detected. Sending accumulated audio.")
                         if audio_data_accumulated:
+                            logger.debug(f"Sending {len(audio_data_accumulated)} bytes of audio.")
                             send_audio_chunk(loop, ws, audio_data_accumulated, RATE, CHANNELS)
                             chunk_counter += 1
                             audio_data_accumulated = b""  # Reset buffer
                         speaking = False
                         silence_duration = 0.0  # Reset silence duration
+
+                        # Trigger response after sending audio
+                        asyncio.run_coroutine_threadsafe(
+                            trigger_response(ws, modalities, system_message, voice), loop
+                        )
                 else:
                     # Accumulate audio when speaking
                     silence_duration = 0.0
                     audio_data_accumulated += pcm_audio
                     speaking = True
+                    logger.debug(f"Accumulating audio. Buffer size: {len(audio_data_accumulated)} bytes.")
 
             except Exception as e:
                 logger.error(f"Error in audio_callback: {e}", exc_info=True)
@@ -89,10 +95,6 @@ async def send_microphone_audio(ws, on_audio_complete):
 
     except Exception as e:
         logger.error(f"Error while sending microphone audio: {e}", exc_info=True)
-    finally:
-        # Trigger assistant response after audio completion
-        logger.debug("All audio chunks sent, calling on_audio_complete.")
-        await on_audio_complete(chunk_counter)
 
 # Function to send the accumulated audio chunk
 def send_audio_chunk(loop, ws, audio_data_accumulated, rate, channels):
@@ -123,19 +125,10 @@ def send_audio_chunk(loop, ws, audio_data_accumulated, rate, channels):
         # Send the audio chunk asynchronously
         future = asyncio.run_coroutine_threadsafe(ws.send(json.dumps(event)), loop)
         future.result()  # Ensure send completes before continuing
-        logger.debug("Audio chunk sent successfully.")
+        logger.debug(f"Audio chunk of size {len(audio_data_accumulated)} bytes sent successfully.")
 
     except Exception as e:
-        logger.error(f"Error sending audio chunk: {e}")
-
-# Function to create a callback for audio completion
-def create_on_audio_complete(ws, modalities, system_message, voice):
-    """Creates a callback function for when all audio chunks have been sent."""
-    async def on_audio_complete(chunk_counter):
-        logger.info(f"All {chunk_counter} audio chunks sent, triggering response.")
-        await trigger_response(ws, modalities, system_message, voice)
-
-    return on_audio_complete
+        logger.error(f"Error sending audio chunk: {e}", exc_info=True)
 
 # Function to trigger the assistant's response after sending audio
 async def trigger_response(ws, modalities, system_message, voice):
@@ -146,17 +139,18 @@ async def trigger_response(ws, modalities, system_message, voice):
             "event_id": event_id,
             "type": "response.create",
             "response": {
-                "modalities": modalities,
+                "modalities": ['audio'],
                 "instructions": system_message,
                 "temperature": 0.7,
                 "max_output_tokens": 1500  # Adjust as needed
             }
         }
 
-        # Include voice information if audio is a modality
-        if "audio" in modalities:
-            response_data["response"]["voice"] = voice
-            response_data["response"]["output_audio_format"] = "pcm16"
+        response_data["response"]["voice"] = voice
+        response_data["response"]["output_audio_format"] = "pcm16"
+
+        # Log the response data to ensure it’s constructed properly
+        logger.info(f"Triggering response with event_id: {event_id}, modalities: {modalities}, system_message: {system_message}")
 
         # Send the response creation event
         await ws.send(json.dumps(response_data))

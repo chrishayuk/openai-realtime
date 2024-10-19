@@ -9,41 +9,31 @@ from message_handler import handle_message
 from connection_handler import connect_to_server, close_connection
 from audio_playback import FLUSH_COMMAND
 from text_message_sender import send_text_message
-from audio_message_sender import send_audio_file, send_microphone_audio, create_on_audio_complete
+from audio_message_sender import send_audio_file, send_microphone_audio
 
 # Initialize logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 async def receive_messages(ws, streaming_mode, message_queue, modalities):
     """Receive messages from the server and handle text or audio playback."""
-
-    # Accumulates full response for assistant
-    transcript_buffer = ""  
-
-    # Tracks whether the assistant has started responding
-    response_started = False  
+    transcript_buffer = ""  # Accumulates full response for assistant
+    response_started = False  # Tracks whether the assistant has started responding
 
     try:
-        # loop through the received messages
         async for message in ws:
-            # get the response
             response = json.loads(message)
-
-            # get the message type
             message_type = response.get('type')
+
             logger.debug(f"Received message of type: {message_type}")
 
             # Handle audio chunk processing
             if message_type == 'response.audio.delta':
-                # get the event id
                 event_id = response.get('event_id')
                 logger.debug(f"Received audio chunk: {event_id}")
 
-                # get the audio chunk
                 audio_chunk = response.get("delta", "")
 
-                # is this an audio chunk
                 if audio_chunk:
                     # Correctly decode base64-encoded audio chunk
                     decoded_audio = decode_audio(audio_chunk)
@@ -59,8 +49,7 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
             # Handle streaming for text or audio transcript response
             if streaming_mode and chunk:
                 if not response_started:
-                    # Print "Assistant:" only once
-                    print("Assistant: ", end="", flush=True)  
+                    print("Assistant: ", end="", flush=True)  # Print "Assistant:" only once
                     response_started = True
 
                 # Print each text chunk or audio transcript chunk immediately
@@ -99,8 +88,6 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
                 if response_started:
                     print(f"\nYou: ", end="", flush=True)
 
-
-                # Add to the message queue for the next input
                 await message_queue.put(None)
                 response_started = False  # Reset after assistant finishes
                 transcript_buffer = ""
@@ -118,13 +105,10 @@ async def send_message(ws, modalities, audio_source=None, system_message=None, v
             if "audio" in modalities and audio_source:
                 if audio_source == "mic":
                     # Capture and send microphone audio
-                    await send_microphone_audio(ws, create_on_audio_complete(ws, modalities, system_message, voice))
+                    await send_microphone_audio(ws, modalities, system_message, voice)
                 else:
                     # Send audio from a file
                     await send_audio_file(ws, audio_source)
-
-                    # Trigger assistant response after audio
-                    await create_on_audio_complete(ws, modalities, system_message, voice)(1)  # Assuming 1 chunk for file
             else:
                 # Handle text input mode (no "You:" prompt here)
                 user_input = await asyncio.get_event_loop().run_in_executor(None, input)

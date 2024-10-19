@@ -1,7 +1,12 @@
 import base64
 import io
+import json
+import logging
 import numpy as np
 from pydub import AudioSegment
+
+# Initialize logging
+logger = logging.getLogger(__name__)
 
 # Function to convert audio bytes to conversation.item.create event format
 def audio_to_item_create_event(audio_bytes: bytes) -> str:
