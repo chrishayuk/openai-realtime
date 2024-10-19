@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 import logging
+import base64
 import sounddevice as sd
 from audio_processing import audio_to_item_create_event, is_silent
 from pydub import AudioSegment

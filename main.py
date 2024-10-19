@@ -17,23 +17,33 @@ logger = logging.getLogger(__name__)
 
 async def receive_messages(ws, streaming_mode, message_queue, modalities):
     """Receive messages from the server and handle text or audio playback."""
-    transcript_buffer = ""  # Accumulates full response for assistant
-    response_started = False  # Tracks whether the assistant has started responding
+
+    # Accumulates full response for assistant
+    transcript_buffer = ""  
+
+    # Tracks whether the assistant has started responding
+    response_started = False  
 
     try:
+        # loop through the received messages
         async for message in ws:
+            # get the response
             response = json.loads(message)
-            message_type = response.get('type')
 
+            # get the message type
+            message_type = response.get('type')
             logger.debug(f"Received message of type: {message_type}")
 
             # Handle audio chunk processing
             if message_type == 'response.audio.delta':
+                # get the event id
                 event_id = response.get('event_id')
                 logger.debug(f"Received audio chunk: {event_id}")
 
+                # get the audio chunk
                 audio_chunk = response.get("delta", "")
 
+                # is this an audio chunk
                 if audio_chunk:
                     # Correctly decode base64-encoded audio chunk
                     decoded_audio = decode_audio(audio_chunk)
@@ -49,7 +59,8 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
             # Handle streaming for text or audio transcript response
             if streaming_mode and chunk:
                 if not response_started:
-                    print("Assistant: ", end="", flush=True)  # Print "Assistant:" only once
+                    # Print "Assistant:" only once
+                    print("Assistant: ", end="", flush=True)  
                     response_started = True
 
                 # Print each text chunk or audio transcript chunk immediately
@@ -99,7 +110,7 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
         logger.error(f"Error while receiving: {e}", exc_info=True)
 
 
-async def send_message(ws, modalities, message_queue, audio_source=None, system_message=None, voice=None):
+async def send_message(ws, modalities, audio_source=None, system_message=None, voice=None):
     """Send user messages (text or audio) and trigger assistant responses."""
     try:
         while True:
@@ -111,6 +122,7 @@ async def send_message(ws, modalities, message_queue, audio_source=None, system_
                 else:
                     # Send audio from a file
                     await send_audio_file(ws, audio_source)
+
                     # Trigger assistant response after audio
                     await create_on_audio_complete(ws, modalities, system_message, voice)(1)  # Assuming 1 chunk for file
             else:
@@ -158,7 +170,7 @@ async def main(modalities, streaming_mode, audio_source=None, system_message=Non
 
         # Asynchronously receive and send messages
         receive_task = asyncio.create_task(receive_messages(ws, streaming_mode, message_queue, modalities))
-        send_task = asyncio.create_task(send_message(ws, modalities, message_queue, audio_source, system_message, voice))
+        send_task = asyncio.create_task(send_message(ws, modalities, audio_source, system_message, voice))
 
         # Wait for both tasks to complete
         await asyncio.gather(receive_task, send_task)
