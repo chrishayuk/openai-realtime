@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import json
 import logging
@@ -9,7 +8,8 @@ from session import send_session_update
 from message_handler import handle_message
 from connection_handler import connect_to_server, close_connection
 from audio_playback import FLUSH_COMMAND
-from message_sender import send_message
+from text_message_sender import send_text_message
+from audio_message_sender import send_audio_file, send_microphone_audio, create_on_audio_complete
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +88,8 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
                 if response_started:
                     print(f"\nYou: ", end="", flush=True)
 
+
+                # Add to the message queue for the next input
                 await message_queue.put(None)
                 response_started = False  # Reset after assistant finishes
                 transcript_buffer = ""
@@ -96,6 +98,35 @@ async def receive_messages(ws, streaming_mode, message_queue, modalities):
     except Exception as e:
         logger.error(f"Error while receiving: {e}", exc_info=True)
 
+
+async def send_message(ws, modalities, message_queue, audio_source=None, system_message=None, voice=None):
+    """Send user messages (text or audio) and trigger assistant responses."""
+    try:
+        while True:
+            # Handle audio mode
+            if "audio" in modalities and audio_source:
+                if audio_source == "mic":
+                    # Capture and send microphone audio
+                    await send_microphone_audio(ws, create_on_audio_complete(ws, modalities, system_message, voice))
+                else:
+                    # Send audio from a file
+                    await send_audio_file(ws, audio_source)
+                    # Trigger assistant response after audio
+                    await create_on_audio_complete(ws, modalities, system_message, voice)(1)  # Assuming 1 chunk for file
+            else:
+                # Handle text input mode (no "You:" prompt here)
+                user_input = await asyncio.get_event_loop().run_in_executor(None, input)
+
+                # Skip empty input
+                if not user_input.strip():
+                    logger.debug("Empty user input, skipping.")
+                    continue
+
+                # Send text message directly
+                await send_text_message(ws, modalities, user_input, system_message, voice)
+
+    except Exception as e:
+        logger.error(f"Error while sending message: {e}", exc_info=True)
 
 async def main(modalities, streaming_mode, audio_source=None, system_message=None, voice=None):
     # Start the playback thread
@@ -120,7 +151,7 @@ async def main(modalities, streaming_mode, audio_source=None, system_message=Non
 
         # Start chatting
         print("Start chatting! (Press Ctrl+C to exit)\n")
-        print(f"\nYou: ", end="", flush=True)  # New line for next input
+        print(f"\nYou: ", end="", flush=True)
 
         # Put None in the queue to trigger the first send
         await message_queue.put(None)
@@ -128,7 +159,6 @@ async def main(modalities, streaming_mode, audio_source=None, system_message=Non
         # Asynchronously receive and send messages
         receive_task = asyncio.create_task(receive_messages(ws, streaming_mode, message_queue, modalities))
         send_task = asyncio.create_task(send_message(ws, modalities, message_queue, audio_source, system_message, voice))
-
 
         # Wait for both tasks to complete
         await asyncio.gather(receive_task, send_task)
