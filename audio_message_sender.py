@@ -28,7 +28,7 @@ async def send_audio_file(ws, file_path):
         logger.error(f"Error while sending audio file: {e}", exc_info=True)
 
 # Function to send microphone audio to the server in real-time
-async def send_microphone_audio(ws, modalities, system_message, voice):
+async def send_microphone_audio(ws, modalities, system_message, voice, response_done_event):
     """
     Capture and send microphone audio in real-time to the server.
     Trigger the assistant response after sending the last audio chunk.
@@ -43,15 +43,48 @@ async def send_microphone_audio(ws, modalities, system_message, voice):
         audio_data_accumulated = b""  # Accumulated audio data
         silence_duration = 0.0  # Duration of consecutive silence
         speaking = False  # Whether the user is speaking
-        chunk_counter = 0  # Number of chunks sent
+        audio_sent = False  # Flag to ensure audio is only sent once after silence
 
         logger.info("Recording from microphone. Speak into the microphone.")
 
+        # Get the current event loop at the start and pass it to the callback
         loop = asyncio.get_running_loop()
+
+        # Define an async function for processing and sending audio chunks
+        async def process_audio_chunk(pcm_audio):
+            nonlocal audio_data_accumulated, silence_duration, speaking, audio_sent
+
+            if is_silent(pcm_audio, threshold=SILENCE_THRESHOLD):
+                silence_duration += len(pcm_audio) / (RATE * 2)  # Adjust for the size of PCM16
+
+                # If user was speaking and silence exceeds threshold, send accumulated audio
+                if speaking and silence_duration >= MAX_SILENCE_DURATION and not audio_sent:
+                    logger.info("End of speech detected. Sending accumulated audio.")
+                    if audio_data_accumulated:
+                        logger.debug(f"Sending {len(audio_data_accumulated)} bytes of audio.")
+                        await send_audio_chunk(ws, audio_data_accumulated, RATE, CHANNELS)
+                        audio_data_accumulated = b""  # Reset buffer after sending
+                        silence_duration = 0.0  # Reset silence duration
+                        speaking = False  # Reset speaking status
+                        audio_sent = True  # Set flag to avoid sending repeatedly
+
+                        # Trigger response after sending audio
+                        await trigger_response(ws, modalities, system_message, voice)
+
+                        # Signal that the response is done
+                        response_done_event.set()
+            else:
+                # Reset flags when new speech is detected
+                silence_duration = 0.0  # Reset silence duration if audio is detected
+                audio_data_accumulated += pcm_audio
+                speaking = True
+                if audio_sent:
+                    # New speech detected after sending audio
+                    audio_sent = False
+                logger.debug(f"Accumulating audio. Buffer size: {len(audio_data_accumulated)} bytes.")
 
         # Audio callback for real-time processing
         def audio_callback(indata, frames, time, status):
-            nonlocal audio_data_accumulated, silence_duration, speaking, chunk_counter
             try:
                 if status:
                     logger.error(f"Error: {status}")
@@ -59,50 +92,30 @@ async def send_microphone_audio(ws, modalities, system_message, voice):
                 # Convert the audio to PCM16 format
                 pcm_audio = (indata * 32767).astype('<i2').tobytes()
 
-                if is_silent(pcm_audio, threshold=SILENCE_THRESHOLD):
-                    silence_duration += frames / RATE
-
-                    # If user was speaking and silence exceeds threshold, send accumulated audio
-                    if speaking and silence_duration >= MAX_SILENCE_DURATION:
-                        logger.info("End of speech detected. Sending accumulated audio.")
-                        if audio_data_accumulated:
-                            logger.debug(f"Sending {len(audio_data_accumulated)} bytes of audio.")
-                            send_audio_chunk(loop, ws, audio_data_accumulated, RATE, CHANNELS)
-                            chunk_counter += 1
-                            audio_data_accumulated = b""  # Reset buffer
-                        speaking = False
-                        silence_duration = 0.0  # Reset silence duration
-
-                        # Trigger response after sending audio
-                        asyncio.run_coroutine_threadsafe(
-                            trigger_response(ws, modalities, system_message, voice), loop
-                        )
-                else:
-                    # Accumulate audio when speaking
-                    silence_duration = 0.0
-                    audio_data_accumulated += pcm_audio
-                    speaking = True
-                    logger.debug(f"Accumulating audio. Buffer size: {len(audio_data_accumulated)} bytes.")
+                # Use the main event loop to process the audio chunk asynchronously
+                asyncio.run_coroutine_threadsafe(process_audio_chunk(pcm_audio), loop)
 
             except Exception as e:
                 logger.error(f"Error in audio_callback: {e}", exc_info=True)
 
         # Start the audio input stream
-        with sd.InputStream(samplerate=RATE, channels=CHANNELS, dtype='float32', callback=audio_callback, blocksize=CHUNK_SIZE):
+        with sd.InputStream(samplerate=RATE, channels=CHANNELS, dtype='float32',
+                            callback=audio_callback, blocksize=CHUNK_SIZE):
             logger.debug("Audio stream started.")
-            while True:
+            while not response_done_event.is_set():
                 await asyncio.sleep(0.1)  # Keep the stream running
 
     except Exception as e:
         logger.error(f"Error while sending microphone audio: {e}", exc_info=True)
 
+
 # Function to send the accumulated audio chunk
-def send_audio_chunk(loop, ws, audio_data_accumulated, rate, channels):
+async def send_audio_chunk(ws, audio_data, rate, channels):
     """Send the accumulated audio chunk via WebSocket."""
     try:
         # Convert audio data to PCM16 and encode in base64
         audio_segment = AudioSegment(
-            data=audio_data_accumulated,
+            data=audio_data,
             sample_width=2,
             frame_rate=rate,
             channels=channels
@@ -123,9 +136,8 @@ def send_audio_chunk(loop, ws, audio_data_accumulated, rate, channels):
         }
 
         # Send the audio chunk asynchronously
-        future = asyncio.run_coroutine_threadsafe(ws.send(json.dumps(event)), loop)
-        future.result()  # Ensure send completes before continuing
-        logger.debug(f"Audio chunk of size {len(audio_data_accumulated)} bytes sent successfully.")
+        await ws.send(json.dumps(event))
+        logger.debug(f"Audio chunk of size {len(audio_data)} bytes sent successfully.")
 
     except Exception as e:
         logger.error(f"Error sending audio chunk: {e}", exc_info=True)
@@ -139,7 +151,7 @@ async def trigger_response(ws, modalities, system_message, voice):
             "event_id": event_id,
             "type": "response.create",
             "response": {
-                "modalities": ['audio'],
+                "modalities": modalities,
                 "instructions": system_message,
                 "temperature": 0.7,
                 "max_output_tokens": 1500  # Adjust as needed
