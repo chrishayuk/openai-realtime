@@ -26,107 +26,90 @@ MAX_RETRIES = 3
 
 async def receive_messages(ws, streaming_mode, message_queue, modalities, state):
     """Receive messages from the server and handle text or audio playback."""
-    # Accumulates full response for assistant
-    transcript_buffer = ""  
+    transcript_buffer = ""  # Accumulates full response for assistant
 
     try:
-        # loop through messages
+        # Loop through messages
         async for message in ws:
-            # load the message
-            response = json.loads(message)
+            try:
+                # Receive and process the message
+                response = json.loads(message)
 
-            # get the message type
-            message_type = response.get('type')
+                # Get the message type
+                message_type = response.get('type')
 
-            # log some debug
-            logger.debug(f"Received message of type: {message_type}")
-            if message_type != "response.audio.delta":
-                logger.debug(f"Full response: {response}")
+                # Log the response for debugging
+                logger.debug(f"Received message of type: {message_type}")
+                if message_type != "response.audio.delta":
+                    logger.debug(f"Full response: {response}")
 
-            # Handle audio chunk processing
-            if message_type == 'response.audio.delta':
-                # get the audio delta
-                await handle_audio_delta(response)
-                continue
-
-            # Handle text and audio transcript messages
-            transcript_buffer, chunk = handle_message(response, transcript_buffer)
-
-            # Handle streaming for text or audio transcript response
-            if streaming_mode and chunk:
-                # check we're in the response_started state
-                if not state["response_started"]:
-                    # Print "Assistant:" only once
-                    print("Assistant: ", end="", flush=True)  
-                    state["response_started"] = True
-
-                # Print each text chunk or audio transcript chunk immediately
-                if message_type in ['response.text.delta', 'response.audio_transcript.delta']:
-                    print(chunk, end="", flush=True)
-
-            # Handle conversation item creation
-            if message_type == 'conversation.item.created':
-                logger.debug("Conversation item created successfully.")
-                continue
-
-            # Handle final transcript from response.output_item.done
-            if message_type == 'response.output_item.done':
-                # get content
-                content_list = response.get('item', {}).get('content', [])
-
-                # loop through content
-                for content in content_list:
-                    # handle audio transcripts
-                    if content.get('type') == 'audio' and 'transcript' in content:
-                        # check if we're in response started state
-                        if not state["response_started"]:
-                            # Print "Assistant:" if not already printed
-                            print("Assistant: ", end="", flush=True)  
-                            state["response_started"] = True
-                        
-                        # print the transcript
-                        print(content['transcript'], end="", flush=True)
-
-            # When 'response.done' or 'response.audio_transcript.done' is received
-            if message_type in ['response.done', 'response.audio_transcript.done']:
-                logger.debug(f"Received {message_type} message.")
-                response_status = response.get('response', {}).get('status')
-
-                if response_status == 'failed':
-                    await handle_error_and_retry(ws, message_queue, modalities, state)
+                # Handle audio chunk processing
+                if message_type == 'response.audio.delta':
+                    await handle_audio_delta(response)
                     continue
 
-                await asyncio.to_thread(audio_playback.audio_queue.join)
+                # Handle text and audio transcript messages
+                transcript_buffer, chunk = handle_message(response, transcript_buffer)
 
-                if state["exit_requested"]:
-                    if "audio" in modalities:
-                        audio_playback.enqueue_audio_chunk(FLUSH_COMMAND)
-                        await asyncio.to_thread(audio_playback.audio_queue.join)
+                # Handle streaming for text or audio transcript response
+                if streaming_mode and chunk:
+                    if not state["response_started"]:
+                        print("Assistant: ", end="", flush=True)  # Print only once
+                        state["response_started"] = True
 
-                if state["response_started"]:
-                    print(f"\nYou: ", end="", flush=True)
+                    if message_type in ['response.text.delta', 'response.audio_transcript.delta']:
+                        print(chunk, end="", flush=True)
 
-                # put a signal prompt in the message queue
-                await message_queue.put(SIGNAL_PROMPT)
+                # Handle final transcript from response.output_item.done
+                if message_type == 'response.output_item.done':
+                    content_list = response.get('item', {}).get('content', [])
+                    for content in content_list:
+                        if content.get('type') == 'audio' and 'transcript' in content:
+                            if not state["response_started"]:
+                                print("Assistant: ", end="", flush=True)
+                                state["response_started"] = True
+                            print(content['transcript'], end="", flush=True)
 
-                # clear response started
-                state["response_started"] = False
+                # Handle 'response.done' or 'response.audio_transcript.done'
+                if message_type in ['response.done', 'response.audio_transcript.done']:
+                    logger.debug(f"Received {message_type} message.")
+                    response_status = response.get('response', {}).get('status')
 
-                # clear the buffer
-                transcript_buffer = ""
+                    if response_status == 'failed':
+                        await handle_error_and_retry(ws, message_queue, modalities, state)
+                        continue
 
-                # continue
-                continue
+                    # Reset failure count on success
+                    state["failure_count"] = 0
+
+                    await asyncio.to_thread(audio_playback.audio_queue.join)
+
+                    if state["exit_requested"]:
+                        if "audio" in modalities:
+                            audio_playback.enqueue_audio_chunk(FLUSH_COMMAND)
+                            await asyncio.to_thread(audio_playback.audio_queue.join)
+
+                    if state["response_started"]:
+                        print(f"\nYou: ", end="", flush=True)
+
+                    # Put a signal prompt in the message queue to continue the conversation
+                    await message_queue.put(SIGNAL_PROMPT)
+                    state["response_started"] = False
+                    transcript_buffer = ""
+                    continue
+
+            except Exception as inner_error:
+                logger.error(f"Error processing message: {inner_error}", exc_info=True)
+                await handle_error_and_retry(ws, message_queue, modalities, state)
 
     except Exception as e:
         logger.error(f"Error while receiving: {e}", exc_info=True)
         await message_queue.put(SIGNAL_EXIT)
 
 async def handle_error_and_retry(ws, message_queue, modalities, state):
-    """Automatically handle errors and retry sending after a short delay."""
+    """Handle retries only when there is an actual error, with a limit on retries."""
     state["failure_count"] += 1
 
-    # check for failures
     if state["failure_count"] <= MAX_RETRIES:
         backoff_time = 2 ** state["failure_count"]
         logger.warning(f"Retrying after {backoff_time} seconds (attempt {state['failure_count']}/{MAX_RETRIES})...")
@@ -135,6 +118,7 @@ async def handle_error_and_retry(ws, message_queue, modalities, state):
     else:
         logger.error("Maximum retry attempts reached. Exiting.")
         await message_queue.put(SIGNAL_EXIT)
+
 
 async def handle_audio_delta(response: dict) -> None:
     """Handle audio chunk processing for 'response.audio.delta' messages."""
@@ -160,30 +144,38 @@ async def send_message(ws, modalities, message_queue, audio_source=None, system_
     try:
         # loop
         while True:
-            # wait until we get a message response back from the message queue
+            # Wait until we get a message response back from the message queue
             signal = await message_queue.get()
             logger.debug(f"send_message received signal: {signal}")
 
-            # check if we have a signal prompt
+            # Check if we have a signal prompt
             if signal == SIGNAL_PROMPT:
-                # handle the prompt
-                await handle_prompt(modalities, audio_source, ws, system_message, voice)
+                # Handle the prompt
+                if "audio" not in modalities:
+                    # Only print "You:" once before collecting user input
+                    user_input = await asyncio.get_event_loop().run_in_executor(None, input, "\nYou: ")
+                    logger.debug(f"User input received: {user_input}")
+
+                    # If the input is empty, do not proceed with sending the message
+                    if not user_input.strip():
+                        continue
+
+                    # Send the user input as a text message
+                    await send_text_message(ws, modalities, user_input, system_message, voice)
+                else:
+                    # Handle audio input in the usual way
+                    await handle_prompt(modalities, audio_source, ws, system_message, voice)
             elif signal == SIGNAL_EXIT:
-                # exiting
+                # Exiting
                 logger.info("Exiting application as per user request.")
                 break
             else:
-                # debug
                 logger.debug(f"Received unexpected signal: {signal}")
 
     except asyncio.CancelledError:
-        # message was cancelled
         logger.debug("send_message task was cancelled.")
     except Exception as e:
-        # error
         logger.error(f"Error while sending message: {e}", exc_info=True)
-
-        # send an exit signal to the message queue
         await message_queue.put(SIGNAL_EXIT)
 
 
@@ -206,7 +198,7 @@ async def handle_prompt(
             await send_audio_file(ws, audio_source)
     else:
         logger.debug("Prompting user for input")
-        user_input = await asyncio.get_event_loop().run_in_executor(None, input, "You: ")
+        user_input = await asyncio.get_event_loop().run_in_executor(None, input)
 
         logger.debug(f"User input received: {user_input}")
 
