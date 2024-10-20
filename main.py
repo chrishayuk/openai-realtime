@@ -110,15 +110,22 @@ async def handle_error_and_retry(ws, message_queue, modalities, state):
     """Handle retries only when there is an actual error, with a limit on retries."""
     state["failure_count"] += 1
 
+    # Add logic to check if retries should stop for certain errors
     if state["failure_count"] <= MAX_RETRIES:
         backoff_time = 2 ** state["failure_count"]
         logger.warning(f"Retrying after {backoff_time} seconds (attempt {state['failure_count']}/{MAX_RETRIES})...")
+
+        # Introduce a connection check here before retrying
+        if ws.closed:
+            logger.error("WebSocket is closed. Stopping retries.")
+            await message_queue.put(SIGNAL_EXIT)
+            return
+
         await asyncio.sleep(backoff_time)
         await message_queue.put(SIGNAL_PROMPT)
     else:
         logger.error("Maximum retry attempts reached. Exiting.")
         await message_queue.put(SIGNAL_EXIT)
-
 
 async def handle_audio_delta(response: dict) -> None:
     """Handle audio chunk processing for 'response.audio.delta' messages."""
@@ -131,12 +138,18 @@ async def handle_audio_delta(response: dict) -> None:
     
     # check if we have a chunk
     if audio_chunk:
-        # decode the audio
-        decoded_audio = decode_audio(audio_chunk)
+        try:
+            # decode
+            decoded_audio = decode_audio(audio_chunk)
+            logger.debug(f"Decoded audio chunk size: {len(decoded_audio)} bytes")
 
-        # queue the audio for playback
-        logger.debug(f"Decoded audio chunk size: {len(decoded_audio)} bytes")
-        audio_playback.enqueue_audio_chunk(decoded_audio)
+            # send
+            audio_playback.enqueue_audio_chunk(decoded_audio)
+        except Exception as e:
+            logger.error(f"Error decoding audio: {e}. This will not trigger a retry.", exc_info=True)
+    else:
+        # empty audio chunk
+        logger.error(f"Received empty audio chunk for event_id: {event_id}")
 
 
 async def send_message(ws, modalities, message_queue, audio_source=None, system_message=None, voice=None):
@@ -153,7 +166,7 @@ async def send_message(ws, modalities, message_queue, audio_source=None, system_
                 # Handle the prompt
                 if "audio" not in modalities:
                     # Only print "You:" once before collecting user input
-                    user_input = await asyncio.get_event_loop().run_in_executor(None, input, "\nYou: ")
+                    user_input = await asyncio.get_event_loop().run_in_executor(None, input, "")
                     logger.debug(f"User input received: {user_input}")
 
                     # If the input is empty, do not proceed with sending the message
@@ -190,7 +203,6 @@ async def handle_prompt(
     if "audio" in modalities and audio_source:
         if audio_source == "mic":
             response_done_event = asyncio.Event()
-            logger.info("Recording from microphone. Speak into the microphone.")
             logger.debug("Audio stream started.")
             await send_microphone_audio(ws, modalities, system_message, voice, response_done_event)
             await response_done_event.wait()

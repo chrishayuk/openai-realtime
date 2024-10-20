@@ -9,24 +9,6 @@ from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
 
-# Function to send audio from a file as a conversation item
-async def send_audio_file(ws, file_path):
-    """Send audio from a file to the WebSocket."""
-    try:
-        # Read the file as bytes
-        with open(file_path, 'rb') as f:
-            audio_bytes = f.read()
-
-        # Convert audio bytes into a WebSocket event
-        event = audio_to_item_create_event(audio_bytes)
-
-        if event:
-            # Send the event over WebSocket
-            await ws.send(event)
-            logger.info(f"Sent audio file: {file_path}")
-    except Exception as e:
-        logger.error(f"Error while sending audio file: {e}", exc_info=True)
-
 # Function to send microphone audio to the server in real-time
 async def send_microphone_audio(ws, modalities, system_message, voice, response_done_event):
     """
@@ -45,7 +27,7 @@ async def send_microphone_audio(ws, modalities, system_message, voice, response_
         speaking = False  # Whether the user is speaking
         audio_sent = False  # Flag to ensure audio is only sent once after silence
 
-        logger.info("Recording from microphone. Speak into the microphone.")
+        logger.debug("Recording from microphone. Speak into the microphone.")
 
         # Get the current event loop at the start and pass it to the callback
         loop = asyncio.get_running_loop()
@@ -59,7 +41,7 @@ async def send_microphone_audio(ws, modalities, system_message, voice, response_
 
                 # If user was speaking and silence exceeds threshold, send accumulated audio
                 if speaking and silence_duration >= MAX_SILENCE_DURATION and not audio_sent:
-                    logger.info("End of speech detected. Sending accumulated audio.")
+                    logger.debug("End of speech detected. Sending accumulated audio.")
                     if audio_data_accumulated:
                         logger.debug(f"Sending {len(audio_data_accumulated)} bytes of audio.")
                         await send_audio_chunk(ws, audio_data_accumulated, RATE, CHANNELS)
@@ -142,6 +124,7 @@ async def send_audio_chunk(ws, audio_data, rate, channels):
     except Exception as e:
         logger.error(f"Error sending audio chunk: {e}", exc_info=True)
 
+
 # Function to trigger the assistant's response after sending audio
 async def trigger_response(ws, modalities, system_message, voice):
     """Trigger assistant response after all audio chunks are sent."""
@@ -162,11 +145,30 @@ async def trigger_response(ws, modalities, system_message, voice):
         response_data["response"]["output_audio_format"] = "pcm16"
 
         # Log the response data to ensure it’s constructed properly
-        logger.info(f"Triggering response with event_id: {event_id}, modalities: {modalities}, system_message: {system_message}")
+        logger.debug(f"Triggering response with event_id: {event_id}, modalities: {modalities}, system_message: {system_message}")
 
         # Send the response creation event
         await ws.send(json.dumps(response_data))
-        logger.info(f"Triggered response with event_id: {event_id}")
+        logger.debug(f"Triggered response with event_id: {event_id}")
 
     except Exception as e:
         logger.error(f"Error while triggering response: {e}", exc_info=True)
+
+
+# Function to send audio from a file as a conversation item
+async def send_audio_file(ws, file_path):
+    """Send audio from a file to the WebSocket."""
+    try:
+        # Read the file as bytes
+        with open(file_path, 'rb') as f:
+            audio_bytes = f.read()
+
+        # Convert audio bytes into a WebSocket event
+        event = audio_to_item_create_event(audio_bytes)
+
+        if event:
+            # Send the event over WebSocket
+            await ws.send(event)
+            logger.debug(f"Sent audio file: {file_path}")
+    except Exception as e:
+        logger.error(f"Error while sending audio file: {e}", exc_info=True)
