@@ -2,16 +2,16 @@ import asyncio
 import json
 import logging
 import threading
-import audio_playback
 from typing import List, Optional
 from argument_parser import parse_arguments
-from audio_decoder import decode_audio
-from connection_handler import connect_to_server, close_connection
-from message_handler import handle_message
-from session import send_session_update
-from audio_playback import FLUSH_COMMAND
-from text_message_sender import send_text_message
-from audio_message_sender import send_audio_file, send_microphone_audio
+import client.audio.audio_playback as audio_playback
+from client.audio.audio_decoder import decode_audio
+from client.audio.audio_playback import FLUSH_COMMAND
+from client.audio.audio_message_sender import send_audio_file, send_microphone_audio
+from client.connection_handler import connect_to_server, close_connection
+from client.message_handler import handle_message
+from client.session import send_session_update
+from client.text_message_sender import send_text_message
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')

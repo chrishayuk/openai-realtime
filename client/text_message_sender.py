@@ -5,36 +5,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def send_conversation_item(ws, user_input):
-    """
-    Send user message as a conversation.item.create event.
-    This function sends the user's input text as a WebSocket event with proper event formatting.
-    """
-    try:
-        event_id = f"event_{uuid.uuid4().hex}"
-        item_id = f"msg_{uuid.uuid4().hex[:28]}"
-
-        # Create the event structure
-        event = {
-            "event_id": event_id,
-            "type": "conversation.item.create",
-            "previous_item_id": None,
-            "item": {
-                "id": item_id,
-                "type": "message",
-                "status": "completed",
-                "role": "user",
-                "content": [{"type": "input_text", "text": user_input}]
-            }
-        }
-
-        # Send the event over WebSocket
-        await ws.send(json.dumps(event))
-        logger.debug(f"Sent text message with event_id: {event_id}")
-
-    except Exception as e:
-        logger.error(f"Error while sending conversation item: {e}", exc_info=True)
-
 async def trigger_text_response(ws, modalities, system_message, voice):
     """
     Trigger assistant response after sending the text message.

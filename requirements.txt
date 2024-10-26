@@ -1,0 +1,7 @@
+python-dotenv
+numpy
+asyncio
+pyaudio
+g711
+pydub
+sounddevice
